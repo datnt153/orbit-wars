@@ -51,11 +51,12 @@ export LR="3e-4"
 export RESUME="data/ppo_w.npz"
 
 LOG=/tmp/ppo_300M_$(date +%s).log
-echo "launching, log: $LOG"
-nohup python src/ppo_train.py data/ppo_w.npz > "$LOG" 2>&1 &
+PYEXE="$(realpath .venv/bin/python)"
+echo "launching, log: $LOG  python: $PYEXE"
+nohup "$PYEXE" src/ppo_train.py data/ppo_w.npz > "$LOG" 2>&1 &
 NEW_PID=$!
 disown 2>/dev/null || true
 echo "PID $NEW_PID — log $LOG"
-sleep 5
-head -5 "$LOG"
+sleep 8
+head -8 "$LOG"
 echo "--- tail -f $LOG  or  wandb dashboard ---"
