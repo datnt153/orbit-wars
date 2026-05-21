@@ -1,0 +1,39 @@
+# Large data — bovard top-10% replays ~21GB
+data/bovard/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Rust
+ow_sim/target/
+ow_sim/.venv/
+
+# OS / tooling
+.DS_Store
+*.swp
+*~
+
+# Build artifacts (keep self-contained .tar.gz under submit/ for reproducibility)
+dist_rl_submission_smoke/
+dist_rl_submission_smoke.tar.gz
+orbit-wars.zip
+
+# Old PPO checkpoints (kept in data/ are the current ones; snapshots dir is legacy)
+ppo_strategy_snapshots_*/
+ppo_strategy_policy*.npz
+ppo_strategy_policy.npz
+
+# Submission backups (large bundles already present; backup duplicates)
+data/ppo_w_backup_*.npz
+
+# Editor caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Logs
+/tmp/ppo*.log
