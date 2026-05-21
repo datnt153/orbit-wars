@@ -183,6 +183,30 @@ def main():
           f"envs={n_envs} steps={n_steps} updates={n_updates} mb={mb} ent={ent_coef}",
           flush=True)
 
+    # Optional Wandb logging — set WANDB=1 to enable.
+    use_wandb = os.environ.get("WANDB", "0") == "1"
+    wandb = None
+    if use_wandb:
+        try:
+            import wandb as _wandb
+            _wandb.init(
+                project=os.environ.get("WANDB_PROJECT", "orbit-wars"),
+                name=os.environ.get("WANDB_NAME", None),
+                config={
+                    "n_envs": n_envs, "n_steps": n_steps, "n_updates": n_updates,
+                    "mb": mb, "lr": lr, "gamma": gamma, "lam": lam,
+                    "clip": clip, "ent_coef": ent_coef, "val_coef": val_coef,
+                    "shape_scale": shape_scale, "resume_steps": start_steps,
+                    "params": sum(p.numel() for p in net.parameters()),
+                    "device": DEV,
+                },
+            )
+            wandb = _wandb
+            print("wandb enabled", flush=True)
+        except Exception as e:
+            print(f"wandb disabled (init failed: {e})", flush=True)
+            wandb = None
+
     # Buffers: (T, E, P, ...)
     sh = (n_steps, n_envs, num_agents)
     buf_pf = torch.zeros(sh + (MAXP, F), device=DEV)
@@ -312,6 +336,16 @@ def main():
                   f"eps={len(ep_rewards)} wr={win_rate:.2f} "
                   f"pl={last_pl:.3f} vl={last_vl:.3f} ent={last_ent:.2f} "
                   f"kl={last_kl:+.3f}", flush=True)
+        if wandb is not None:
+            wandb.log({
+                "update": update,
+                "env_steps": total_env_steps + start_steps,
+                "sps": sps,
+                "episodes": len(ep_rewards),
+                "win_rate_p0_recent50": win_rate,
+                "policy_loss": last_pl, "value_loss": last_vl,
+                "entropy": last_ent, "kl": last_kl,
+            }, step=total_env_steps + start_steps)
 
         # save every 20 updates (or last) so daily-pull always has a fresh ckpt
         if (update + 1) % 20 == 0 or update == n_updates - 1:
