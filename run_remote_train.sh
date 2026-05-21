@@ -51,7 +51,7 @@ export LR="3e-4"
 export RESUME="data/ppo_w.npz"
 
 LOG=/tmp/ppo_300M_$(date +%s).log
-PYEXE="$(realpath .venv/bin/python)"
+PYEXE="$PWD/.venv/bin/python"  # absolute but DON'T resolve symlink (uv venv → site-packages discovery)
 echo "launching, log: $LOG  python: $PYEXE"
 nohup "$PYEXE" src/ppo_train.py data/ppo_w.npz > "$LOG" 2>&1 &
 NEW_PID=$!
