@@ -230,3 +230,14 @@ env-steps / 21 min — MVP scale, vs Lux-2nd 300M = 1000× nhỏ), R5
 ensemble_ppo_cand submit always-safe PENDING (2-latest {ppo, π_θ_cand
 1010.4} → floor 1010.4). Goal "all tasks done" ✅. Code persist: ow_sim/,
 src/ppo_train.py, submit/main_ppo_cand.py, ensemble_ppo_cand.tar.gz.
+
+**SPEED OPT + EARLY PPO CHECK (2026-05-21 tối):** Rust `observe_batch` +
+`step_from_samples` → SPS 400→**4400 (10×)**, parity Δ≤6e-8. Resume từ
+6.06M → 15.73M cumulative trong 30 min. Arena PPO-15.73M vs π_θ-cand
+**46.7% (28-32, 60g 0err)** — tie thống kê, **PPO chưa hơn π_θ-cand**.
+Không submit (chờ 100M+). Local 3090 killed (server-ai vẫn timeout —
+user fix sau). Ckpt giữ ở `data/ppo_w.npz`, backup 6M ở
+`data/ppo_w_backup_slow.npz`.
+
+**GITHUB:** repo public https://github.com/datnt153/orbit-wars (69 files,
+39MB, .gitignore exclude bovard/venv/target).
