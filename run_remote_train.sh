@@ -13,12 +13,20 @@ cd "$(dirname "$0")"
 [[ -f data/ppo_w.npz ]] || echo "[warn] no ppo_w.npz to resume — will train from scratch"
 
 # Python env: uv venv at .venv. Build once if missing.
+# Torch: cu121 build (CUDA 12.x compatible — newer cu130 fails on driver
+# 575.x / CUDA 12.9 like on hg-rtx4090).
 if [[ ! -d .venv ]]; then
   uv venv -p 3.12
   source .venv/bin/activate
-  uv pip install torch numpy maturin wandb
+  uv pip install --index-url https://download.pytorch.org/whl/cu121 torch
+  uv pip install numpy maturin wandb
 else
   source .venv/bin/activate
+  # ensure torch can see CUDA (auto-reinstall cu121 if it can't)
+  if ! python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+    echo "[setup] torch missing CUDA → reinstall cu121"
+    uv pip install --reinstall --index-url https://download.pytorch.org/whl/cu121 torch
+  fi
 fi
 
 # ow_sim wheel: build once if the COMPILED extension (with State) not present.
