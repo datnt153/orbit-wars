@@ -21,13 +21,16 @@ else
   source .venv/bin/activate
 fi
 
-# ow_sim wheel: build once if not installed.
-if ! python -c "import ow_sim" 2>/dev/null; then
+# ow_sim wheel: build once if the COMPILED extension (with State) not present.
+# (Naive `import ow_sim` succeeds spuriously because ow_sim/ subdir at repo
+#  root loads as an empty namespace package — must check State attribute.)
+if ! python -c "import ow_sim; assert hasattr(ow_sim, 'State')" 2>/dev/null; then
+  echo "[setup] building ow_sim wheel via maturin develop --release"
   pushd ow_sim
   VIRTUAL_ENV=$(realpath ../.venv) maturin develop --release
   popd
 fi
-python -c "import ow_sim; print('ow_sim ok')"
+python -c "import ow_sim; assert hasattr(ow_sim, 'State'); print('ow_sim ok (State present)')"
 
 # Wandb (one-time on this host: wandb login <key>).
 if wandb status 2>/dev/null | grep -q "Logged in"; then
