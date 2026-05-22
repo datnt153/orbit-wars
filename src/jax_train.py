@@ -32,6 +32,7 @@ import jax_policy
 
 ROOT = Path(__file__).resolve().parent.parent
 F, G, P = jax_encode.F, jax_encode.G, jax_env.MAXP
+D = jax_policy.D
 GAMMA, LAM, CLIP, VAL_COEF, MAX_GRAD = 0.999, 0.95, 0.2, 0.5, 0.5
 
 
@@ -210,6 +211,43 @@ def make_train_update(num_agents, n_envs, n_steps, epochs, mb, shape_scale):
     return jitted, opt, holder
 
 
+def init_params(key):
+    """From-scratch random init (pure JAX; remote venv has no torch).
+    PyTorch-Linear convention: weight [out,in], U(-1/sqrt(in), 1/sqrt(in))."""
+    ks = iter(jax.random.split(key, 40))
+
+    def lin(out, inp):
+        lim = 1.0 / np.sqrt(inp)
+        return (jax.random.uniform(next(ks), (out, inp), minval=-lim, maxval=lim),
+                jnp.zeros((out,)))
+
+    p = {}
+
+    def put(name, wb):
+        p[name + ".weight"], p[name + ".bias"] = wb
+
+    put("inp", lin(D, F)); put("gemb", lin(D, G))
+    for bi in (0, 1):
+        b = f"blocks.{bi}"
+        p[b + ".n1.weight"] = jnp.ones((D,)); p[b + ".n1.bias"] = jnp.zeros((D,))
+        p[b + ".n2.weight"] = jnp.ones((D,)); p[b + ".n2.bias"] = jnp.zeros((D,))
+        wq = lin(3 * D, D)
+        p[b + ".att.in_proj_weight"], p[b + ".att.in_proj_bias"] = wq
+        put(b + ".att.out_proj", lin(D, D))
+        put(b + ".ff.0", lin(2 * D, D)); put(b + ".ff.2", lin(D, 2 * D))
+    put("gate.0", lin(D, D)); put("gate.2", lin(1, D))
+    put("tq", lin(D, D)); put("tk", lin(D, D))
+    put("v_head.0", lin(D, D)); put("v_head.2", lin(1, D))
+    return p
+
+
+def save_ckpt(path, params, steps, upd):
+    out = {k: np.asarray(v) for k, v in params.items()}
+    out.update(_F=np.int64(F), _G=np.int64(G), _D=np.int64(D),
+               _STEPS=np.int64(steps), _UPD=np.int64(upd))
+    np.savez(path, **out)
+
+
 def main():
     A = int(os.environ.get("NUM_AGENTS", "2"))
     N = int(os.environ.get("N_ENVS", "512"))
@@ -217,15 +255,29 @@ def main():
     epochs = int(os.environ.get("PPO_EPOCHS", "4"))
     mb = int(os.environ.get("MB", "1024"))
     updates = int(os.environ.get("UPDATES", "20"))
-    ent = float(os.environ.get("ENT", "0.005"))
-    shape_scale = float(os.environ.get("SHAPE_SCALE", "0.01"))
-    resume = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "data" / "ppo_best.npz")
+    ent = float(os.environ.get("ENT", "0.01"))
+    ent_floor = float(os.environ.get("ENT_FLOOR", "0.003"))    # keep exploring
+    anneal_upd = int(os.environ.get("ANNEAL_UPD", str(updates)))
+    shape_scale = float(os.environ.get("SHAPE_SCALE", "0.0"))  # 0 = pure terminal
+    promote_every = int(os.environ.get("PROMOTE_EVERY", "100"))  # league refresh
+    save_every = int(os.environ.get("SAVE_EVERY", "100"))
+    out_path = os.environ.get("OUT", str(ROOT / "data" / "jax_ppo.npz"))
+    resume = sys.argv[1] if len(sys.argv) > 1 else "scratch"
 
     print(f"device={jax.devices()[0].platform} A={A} N={N} T={T} mb={mb} "
-          f"epochs={epochs} updates={updates} batch={N*A*T}")
-    params = jax_policy.load_params(resume)
-    anchor = jax.tree_util.tree_map(lambda x: x, params)   # frozen copy
-    print(f"resume={Path(resume).name}")
+          f"epochs={epochs} updates={updates} batch={N*A*T} "
+          f"shape={shape_scale} ent={ent}->{ent_floor} out={Path(out_path).name}")
+    key = jax.random.PRNGKey(int(os.environ.get("SEED", "0")))
+    if resume == "scratch":
+        key, ik = jax.random.split(key)
+        params = init_params(ik)
+        prior_steps = 0
+        print("init: FROM SCRATCH (pure self-play)")
+    else:
+        params = jax_policy.load_params(resume)
+        prior_steps = int(np.load(resume).get("_STEPS", 0))
+        print(f"resume={Path(resume).name} prior_steps={prior_steps:,}")
+    anchor = jax.tree_util.tree_map(lambda x: x, params)
 
     train_update, opt, holder = make_train_update(A, N, T, epochs, mb, shape_scale)
     opt_state = opt.init(params)
@@ -233,12 +285,11 @@ def main():
     holder["js0"] = js0
     js = jax.tree_util.tree_map(lambda x: x, js0)
     phi = potential(js, A)
-    key = jax.random.PRNGKey(0)
 
     steps_per = N * T
     t_start = time.time()
     for u in range(updates):
-        ent_t = ent * max(0.0, 1.0 - u / max(1, updates))
+        ent_t = max(ent_floor, ent * max(0.0, 1.0 - u / max(1, anneal_upd)))
         t0 = time.time()
         params, opt_state, js, phi, key, metr = train_update(
             params, opt_state, anchor, js, phi, key, jnp.float32(ent_t))
@@ -246,19 +297,22 @@ def main():
         dt = time.time() - t0
         pl, vl, em, kl, cf, ev, nd, nw = [float(x) for x in metr]
         awr = nw / nd if nd > 0 else 0.0
-        sps = steps_per / dt
+        steps = prior_steps + (u + 1) * steps_per
         if u == 0:
             print(f"[u0 compile+run {dt:.1f}s]")
-        print(f"u{u:03d} {sps:8.0f} sps | pl {pl:+.3f} vl {vl:6.2f} "
-              f"ent {em:.3f} kl {kl:+.4f} cf {cf:.3f} ev {ev:+.2f} "
-              f"awr {awr:.2f} ({int(nd)}g)")
+        print(f"u{u:04d} {steps_per/dt:7.0f}sps steps={steps/1e6:5.1f}M | "
+              f"pl {pl:+.3f} vl {vl:6.2f} ent {em:.3f} kl {kl:+.4f} "
+              f"cf {cf:.3f} ev {ev:+.2f} awr {awr:.2f} ({int(nd)}g)", flush=True)
+        # league: refresh anchor to current learner (moving self-play opponent)
+        if promote_every and (u + 1) % promote_every == 0:
+            anchor = jax.tree_util.tree_map(lambda x: x, params)
+        if save_every and ((u + 1) % save_every == 0 or u == updates - 1):
+            save_ckpt(out_path, params, steps, u + 1)
+            print(f"[saved {Path(out_path).name} @ {steps/1e6:.1f}M]", flush=True)
 
     tot = time.time() - t_start
-    total_steps = updates * steps_per
-    print(f"\nTOTAL {total_steps:,} env-steps in {tot:.1f}s -> "
-          f"{total_steps/tot:,.0f} sps (incl compile)")
-    # steady SPS excluding first (compile) update
-    print(f"finite params: {bool(jnp.isfinite(jax.flatten_util.ravel_pytree(params)[0]).all())}")
+    print(f"\nDONE {updates*steps_per:,} env-steps in {tot:.0f}s. "
+          f"Gate next: arena_vs_v4.py {out_path}")
 
 
 if __name__ == "__main__":
