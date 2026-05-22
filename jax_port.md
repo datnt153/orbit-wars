@@ -31,17 +31,30 @@ List Python → mảng fixed-shape + mask:
 
 ## Lộ trình (gate parity từng bước)
 - [x] **S0** branch + plan + state pytree + converters dict↔jax (round-trip test) + production
-- [ ] **S1** phase 1 fleet launch (slot allocation theo mask, next_fleet_id)
-- [ ] **S2** phase 3 fleet movement + collision (sun seg-dist, bounds, planet hit)
-- [ ] **S3** phase 4 planet rotation + sweep (chỉ khi r+rad < 50)
-- [ ] **S4** phase 6 combat resolution (group theo player, top-2, tie → -1)
-- [ ] **S5** phase 7 termination + scoring (±1, alive≤1, step≥ep-2)
-- [ ] **S6** comets (advance theo padded paths; spawn skip)
-- [ ] **S7** full `step()` parity vs fast_sim: N=1000 state ngẫu nhiên + rollout 50 bước, divergence=0 (tol)
-- [ ] **S8** `vmap` batch + `lax.scan` rollout → đo SPS (mục tiêu ≥10k, hết F2)
-- [ ] **S9** policy entity-transformer trong JAX (Flax/Equinox), parity forward vs PyTorch
+- [x] **S1** phase 1 fleet launch (slot allocation theo mask qua argsort + scatter)
+- [x] **S2** phase 3 fleet movement + collision (sun seg-dist, bounds, planet hit — ma trận F×P)
+- [x] **S3** phase 4 planet rotation + sweep (chỉ khi r+rad < 50)
+- [x] **S4** phase 6 combat resolution (group theo player, top-2, tie → -1)
+- [x] **S5** phase 7 termination + scoring (±1, alive≤1, step≥ep-2)
+- [ ] **S6** comets (advance theo padded paths; spawn skip) — HOÃN, parity comet-free
+- [x] **S7** full `step()` parity vs fast_sim: 50 single-step ngẫu nhiên + rollout 12 bước, maxdiff **4e-5** (noise float32) ✅
+- [x] **S8** `vmap` batch + `lax.scan` rollout → **2.73M env-steps/s** trên 1×RTX4090 (2048×500=1M trong 375ms), random policy. F2 XÓA SỔ ✅
+- [ ] **S9** policy entity-transformer trong JAX (Flax/Equinox), parity forward vs PyTorch ← TIẾP THEO (số train thật)
 - [ ] **S10** PPO loop JAX (jitted): port recipe anchor+league+anneal; log EV/clip_frac/awr
 - [ ] **S11** export weights → numpy bundle (parity inference) → arena vs PyTorch-best → submit khi vượt
+
+## Kết quả đo (2026-05-22)
+| Config | env-steps | time | SPS | ghi chú |
+|---|---|---|---|---|
+| 2048×500 | 1.02M | 375ms | **2.73M/s** | cấu hình "1M rollout" |
+| 4096×500 | 2.05M | 799ms | 2.56M/s | qua đỉnh, bandwidth-bound |
+| 8192×500 | — | OOM | — | F×P matrix vượt VRAM |
+| CPU (local) 512×200 | — | — | ~10k/s | XLA CPU, sanity |
+
+So với PyTorch+Rust **~4.1k SPS**: env-only nhanh ~660×. Setup remote: worktree
+`~/orbit-wars-jax` (cô lập khỏi run PyTorch live ở `~/orbit-wars`), venv JAX riêng
+`jax[cuda12]` 0.10.1, chạy **GPU1** + `XLA_PYTHON_CLIENT_PREALLOCATE=false` (không
+đụng GPU0 của run live). **Số training thật cần S9** (policy forward trong loop).
 
 ## Go/no-go
 - Nếu tới **S8** SPS không vượt PyTorch đáng kể → dừng, quay lại PyTorch (sunk cost).
