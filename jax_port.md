@@ -39,22 +39,30 @@ List Python → mảng fixed-shape + mask:
 - [ ] **S6** comets (advance theo padded paths; spawn skip) — HOÃN, parity comet-free
 - [x] **S7** full `step()` parity vs fast_sim: 50 single-step ngẫu nhiên + rollout 12 bước, maxdiff **4e-5** (noise float32) ✅
 - [x] **S8** `vmap` batch + `lax.scan` rollout → **2.73M env-steps/s** trên 1×RTX4090 (2048×500=1M trong 375ms), random policy. F2 XÓA SỔ ✅
-- [ ] **S9** policy entity-transformer trong JAX (Flax/Equinox), parity forward vs PyTorch ← TIẾP THEO (số train thật)
-- [ ] **S10** PPO loop JAX (jitted): port recipe anchor+league+anneal; log EV/clip_frac/awr
+- [x] **S9** policy entity-transformer + encode_state trong JAX thuần, **parity vs PyTorch**:
+      forward gate/tgt/value **1e-4**, encode **6e-8**. Self-play rollout đầy đủ
+      (encode→forward→sample→merge owner→step) chạy in-graph ✅
+- [ ] **S10** PPO loop JAX (jitted): GAE + clip + value loss + recipe anchor/league/anneal ← TIẾP THEO
 - [ ] **S11** export weights → numpy bundle (parity inference) → arena vs PyTorch-best → submit khi vượt
 
-## Kết quả đo (2026-05-22)
+## Kết quả đo (2026-05-22) trên 1×RTX4090
+**Env-only (random policy):**
 | Config | env-steps | time | SPS | ghi chú |
 |---|---|---|---|---|
-| 2048×500 | 1.02M | 375ms | **2.73M/s** | cấu hình "1M rollout" |
+| 2048×500 | 1.02M | 375ms | **2.73M/s** | "1M rollout", đỉnh |
 | 4096×500 | 2.05M | 799ms | 2.56M/s | qua đỉnh, bandwidth-bound |
 | 8192×500 | — | OOM | — | F×P matrix vượt VRAM |
-| CPU (local) 512×200 | — | — | ~10k/s | XLA CPU, sanity |
 
-So với PyTorch+Rust **~4.1k SPS**: env-only nhanh ~660×. Setup remote: worktree
-`~/orbit-wars-jax` (cô lập khỏi run PyTorch live ở `~/orbit-wars`), venv JAX riêng
-`jax[cuda12]` 0.10.1, chạy **GPU1** + `XLA_PYTHON_CLIENT_PREALLOCATE=false` (không
-đụng GPU0 của run live). **Số training thật cần S9** (policy forward trong loop).
+**Self-play (policy 85K thật trong loop = số train thật, chưa có PPO update):**
+| Config | env-steps | time | SPS |
+|---|---|---|---|
+| 2048×500 | 1.02M | 6.24s | **164k/s** |
+
+So với **PyTorch+Rust ~4.1k SPS**: env-only ~660×, self-play (rollout) **~40×**.
+Winner báo ~10k SPS cho FULL JAX (gồm PPO update) → ta còn dư địa lớn. Setup
+remote: worktree `~/orbit-wars-jax` (cô lập khỏi run PyTorch live `~/orbit-wars`),
+venv `jax[cuda12]` 0.10.1, **GPU1** + `PREALLOCATE=false` (không đụng GPU0 run live).
+**Parity 3 mảnh đều xanh** (env / encode / forward) → nền tảng đáng tin cho S10.
 
 ## Go/no-go
 - Nếu tới **S8** SPS không vượt PyTorch đáng kể → dừng, quay lại PyTorch (sunk cost).
