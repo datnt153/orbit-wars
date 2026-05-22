@@ -25,6 +25,11 @@ import jax
 import jax.numpy as jnp
 import optax
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 import fast_sim
 import jax_env
 import jax_encode
@@ -279,6 +284,15 @@ def main():
         print(f"resume={Path(resume).name} prior_steps={prior_steps:,}")
     anchor = jax.tree_util.tree_map(lambda x: x, params)
 
+    use_wandb = os.environ.get("WANDB", "0") == "1" and wandb is not None
+    if use_wandb:
+        wandb.init(project="orbit-wars",
+                   name=f"jax_ppo_{time.strftime('%Y%m%d_%H%M')}",
+                   config=dict(A=A, N=N, T=T, mb=mb, epochs=epochs, updates=updates,
+                               ent=ent, ent_floor=ent_floor, shape_scale=shape_scale,
+                               resume=Path(resume).name, prior_steps=prior_steps))
+        print("wandb: ON")
+
     train_update, opt, holder = make_train_update(A, N, T, epochs, mb, shape_scale)
     opt_state = opt.init(params)
     js0 = load_templates(N, A)
@@ -303,6 +317,11 @@ def main():
         print(f"u{u:04d} {steps_per/dt:7.0f}sps steps={steps/1e6:5.1f}M | "
               f"pl {pl:+.3f} vl {vl:6.2f} ent {em:.3f} kl {kl:+.4f} "
               f"cf {cf:.3f} ev {ev:+.2f} awr {awr:.2f} ({int(nd)}g)", flush=True)
+        if use_wandb:
+            wandb.log({"sps": steps_per / dt, "policy_loss": pl, "value_loss": vl,
+                       "entropy": em, "kl": kl, "clip_frac": cf,
+                       "explained_variance": ev, "awr": awr, "ent_coef": ent_t,
+                       "games": int(nd)}, step=steps)
         # league: refresh anchor to current learner (moving self-play opponent)
         if promote_every and (u + 1) % promote_every == 0:
             anchor = jax.tree_util.tree_map(lambda x: x, params)
@@ -311,6 +330,8 @@ def main():
             print(f"[saved {Path(out_path).name} @ {steps/1e6:.1f}M]", flush=True)
 
     tot = time.time() - t_start
+    if use_wandb:
+        wandb.finish()
     print(f"\nDONE {updates*steps_per:,} env-steps in {tot:.0f}s. "
           f"Gate next: arena_vs_v4.py {out_path}")
 
