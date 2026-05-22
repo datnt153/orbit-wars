@@ -81,3 +81,21 @@ def forward(p, pf, pmask, gf):
     val = jax.nn.relu(_linear(pooled, p, "v_head.0"))
     val = _linear(val, p, "v_head.2")[..., 0]                          # [B]
     return gate, tgt, val
+
+
+def log_prob_and_entropy(gate, tgt, omask, pmask, launch, target):
+    """JAX port of ppo_train.log_prob_and_entropy. Returns lp[B], ent[B].
+    gate[B,P], tgt[B,P,P], omask/pmask/launch/target[B,P] (target int)."""
+    eps = 1e-6
+    gp = jnp.clip(jax.nn.sigmoid(gate), eps, 1 - eps)
+    bern_lp = (launch * jnp.log(gp) + (1 - launch) * jnp.log(1 - gp)) * omask
+    bern_ent = -(gp * jnp.log(gp) + (1 - gp) * jnp.log(1 - gp)) * omask
+    log_sm = jax.nn.log_softmax(tgt, axis=-1)
+    tgt_safe = jnp.clip(target, 0, None)[..., None]
+    target_lp = jnp.take_along_axis(log_sm, tgt_safe, axis=-1)[..., 0]
+    launch_target = launch * omask
+    tgt_term = target_lp * launch_target
+    tgt_ent = -jnp.sum(jnp.exp(log_sm) * log_sm, axis=-1) * launch_target
+    lp = jnp.sum(bern_lp, axis=-1) + jnp.sum(tgt_term, axis=-1)
+    ent = jnp.sum(bern_ent, axis=-1) + jnp.sum(tgt_ent, axis=-1)
+    return lp, ent
