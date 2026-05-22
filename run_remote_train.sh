@@ -56,10 +56,17 @@ export N_ENVS="128"
 export N_STEPS="128"
 export UPDATES="${UPDATES:-18000}"         # ~300M env-steps target
 export MB="1024"
-export ENT="0.005"
+export ENT="0.005"                         # ANNEALED → 0 over the run
 export SHAPE="0.01"
-export LR="3e-4"
-export RESUME="data/ppo_w.npz"
+export LR="1e-4"                           # gentler: fine-tune from 15.7M (3e-4 destabilised)
+export RESUME="data/ppo_w.npz"             # good 15.7M policy (restored)
+# --- robust recipe (fixes pure-self-play entropy drift; validated +0.578 vs 15.7M) ---
+export ANCHOR_FRAC="0.5"                   # half the envs: learner(p0) vs frozen anchor(p1)
+export ANCHOR_PATH="data/ppo_w.npz"        # anchor starts == 15.7M, promotes when beaten
+export N_MAPS="128"                         # round-robin maps (single map overfits)
+export PROMOTE_THR="0.55"                  # promote anchor only when learner clearly wins
+export PROMOTE_MIN_GAMES="200"
+export BEST_PATH="data/ppo_best.npz"       # always-best snapshot (arena-gate this before submit)
 
 LOG=/tmp/ppo_300M_$(date +%s).log
 PYEXE="$PWD/.venv/bin/python"  # absolute but DON'T resolve symlink (uv venv → site-packages discovery)
