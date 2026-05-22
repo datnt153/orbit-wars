@@ -60,14 +60,16 @@ export RAYON_NUM_THREADS="80"              # all CPU threads for Rust env
 # GPU round-trip driven by slow Xeon cores, NOT CPU/rayon (Rust env = 65-132k
 # SPS). Large N_ENVS amortises it: 1024x32 = 3612 SPS (+41% vs 128x128) and
 # best value-loss. Saturates ~3600 (can't push further without async rollout).
-export N_ENVS="1024"
-export N_STEPS="32"                        # batch = 1024*32 = 32768 (fits 24GB)
-export UPDATES="${UPDATES:-9000}"          # ~295M env-steps target (batch doubled)
+export N_ENVS="512"
+export N_STEPS="64"                         # batch=512*64=32768. n_steps>=64 validated;
+                                            # n_steps=32 (config D) HURT learning (live regressed
+                                            # 0.16 vs best) — horizon too short for 500-turn game.
+export UPDATES="${UPDATES:-9000}"          # ~295M env-steps target
 export MB="1024"
 export ENT="0.005"                         # ANNEALED → 0 over the run
 export SHAPE="0.01"
 export LR="1e-4"                           # gentler: fine-tune (3e-4 destabilised)
-export RESUME="data/ppo_w.npz"             # latest learner (continues league run)
+export RESUME="data/ppo_best.npz"          # resume from BEST (latest live learner had drifted below it)
 # --- robust recipe (fixes pure-self-play entropy drift; validated +0.578 vs 15.7M) ---
 export ANCHOR_FRAC="0.5"                   # half the envs: learner(p0) vs frozen anchor(p1)
 export ANCHOR_PATH="data/ppo_best.npz"     # anchor = last PROMOTED best (17.15M)
