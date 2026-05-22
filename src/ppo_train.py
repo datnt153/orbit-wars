@@ -377,11 +377,16 @@ def main():
         adv_F = flat(adv); ret_F = flat(ret)
         tmask_F = slot_mask.unsqueeze(0).expand(n_steps, n_envs, num_agents).reshape(-1)
         _m = tmask_F > 0.5
+        # explained variance of the value head (1st-place's key health metric:
+        # should climb to >0.8; <0.5 ⇒ suspect obs/arch). Computed pre-update.
+        val_F = flat(buf_val)
+        _r = ret_F[_m]
+        ev = (1.0 - (_r - val_F[_m]).var() / (_r.var() + 1e-8)).item()
         adv_F = (adv_F - adv_F[_m].mean()) / (adv_F[_m].std() + 1e-6)
         N = pf_F.shape[0]
         ent_coef_t = ent_coef * max(0.0, 1.0 - update / max(1, n_updates))  # anneal → 0
 
-        last_pl = last_vl = last_ent = last_kl = 0.0
+        last_pl = last_vl = last_ent = last_kl = last_clipfrac = 0.0
         for _ep in range(epochs):
             perm = torch.randperm(N, device=DEV)
             for s in range(0, N, mb):
@@ -407,6 +412,9 @@ def main():
                 last_pl = policy_loss.item(); last_vl = value_loss.item()
                 last_ent = ent_mean.item()
                 last_kl = (((lp_old[ib] - lp_new) * tb).sum() / denom).item()
+                with torch.no_grad():   # clip_frac: 1st-place's earliest warning sign
+                    cf = ((ratio - 1.0).abs() > clip).float()
+                    last_clipfrac = ((cf * tb).sum() / denom).item()
 
         elapsed = time.time() - t0
         sps = total_env_steps / elapsed
@@ -434,7 +442,8 @@ def main():
         if update % log_every == 0 or update == n_updates - 1:
             print(f"upd{update:03d} steps={total_env_steps:>8} sps={sps:>6.0f} "
                   f"eps={len(ep_rewards)} wr={win_rate:.2f} awr={awr:.2f} "
-                  f"pl={last_pl:.3f} vl={last_vl:.3f} ent={last_ent:.2f} "
+                  f"pl={last_pl:.3f} vl={last_vl:.3f} ev={ev:+.2f} "
+                  f"cf={last_clipfrac:.2f} ent={last_ent:.2f} "
                   f"entc={ent_coef_t:.4f} kl={last_kl:+.3f}", flush=True)
         if wandb is not None:
             wandb.log({
@@ -447,6 +456,7 @@ def main():
                 "anchor_promoted": int(promoted),
                 "ent_coef": ent_coef_t,
                 "policy_loss": last_pl, "value_loss": last_vl,
+                "explained_variance": ev, "clip_frac": last_clipfrac,
                 "entropy": last_ent, "kl": last_kl,
             }, step=total_env_steps + start_steps)
 

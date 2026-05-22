@@ -12,6 +12,7 @@ Reports A win-rate vs B (draws shown separately), summed over both seats.
 """
 import glob
 import json
+import os
 import sys
 
 import numpy as np
@@ -33,10 +34,11 @@ def load_net(path):
 
 
 def load_templates(n):
+    off = int(os.environ.get("MAP_OFFSET", "0"))   # held-out test: offset past trained maps
     eps = sorted(glob.glob(str(ROOT / "data" / "bovard" / "2026-05-04" /
                                "episodes" / "episodes" / "*.json")))
     out = []
-    for p in eps[:n]:
+    for p in eps[off:off + n]:
         obs0 = json.loads(open(p).read())["steps"][0][0]["observation"]
         out.append(ow_sim.State(obs0, 6.0, 500))
     return out
