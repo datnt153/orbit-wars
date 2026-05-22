@@ -40,11 +40,15 @@ if ! python -c "import ow_sim; assert hasattr(ow_sim, 'State')" 2>/dev/null; the
 fi
 python -c "import ow_sim; assert hasattr(ow_sim, 'State'); print('ow_sim ok (State present)')"
 
-# Wandb (one-time on this host: wandb login <key>).
-if wandb status 2>/dev/null | grep -q "Logged in"; then
+# Wandb (one-time on this host: wandb login <key>). Detect via netrc/env/key
+# (`wandb status` parsing is unreliable). Allow WANDB=0 override to disable.
+if [[ "${WANDB:-}" == "0" ]]; then
+  echo "[info] wandb disabled by env override."
+elif [[ -n "${WANDB_API_KEY:-}" ]] || grep -q "api.wandb.ai" "$HOME/.netrc" 2>/dev/null; then
   export WANDB=1
   export WANDB_PROJECT="orbit-wars"
-  export WANDB_NAME="ppo_300M_$(date +%Y%m%d_%H%M)"
+  export WANDB_NAME="ppo_${WANDB_NAME_SUFFIX:-$(date +%Y%m%d_%H%M)}"
+  echo "[info] wandb ENABLED → project=$WANDB_PROJECT name=$WANDB_NAME"
 else
   echo "[info] wandb not logged in — disabling. Run 'wandb login' to enable."
   export WANDB=0

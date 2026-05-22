@@ -327,23 +327,29 @@ def main():
             buf_target[t] = tgt_b
             buf_lp[t]     = lp.reshape(n_envs, num_agents)
             buf_val[t]    = v.reshape(n_envs, num_agents)
-            # base reward = shaped step reward
-            for e in range(n_envs):
-                for p in range(num_agents):
-                    buf_rew[t, e, p] = float(shaped[e, p])
+            # base reward = shaped step (+ terminal) — vectorized: build on CPU,
+            # 2 bulk transfers instead of 2*n_envs per-element GPU scalar writes.
+            rew_np = np.ascontiguousarray(shaped, dtype=np.float32)
+            done_np = np.zeros((n_envs, num_agents), np.float32)
             dm = pool.done_mask()
             rws = pool.rewards()
-            for e in range(n_envs):
-                if dm[e]:
-                    if len(rws[e]) >= num_agents:
-                        for p in range(num_agents):
-                            buf_rew[t, e, p] += float(rws[e][p])   # +terminal
-                            buf_done[t, e, p] = 1.0
-                        ep_rewards.append(int(rws[e][0]))
-                        if e < n_anchor:   # learner(p0) vs frozen anchor(p1)
-                            anchor_results.append(1 if rws[e][0] > 0 else 0)
-                    pool.reset_one(e, templates[(e + len(ep_rewards)) % len(templates)])
-                    prev_diffs[e] = pool.diff_vs_avg_opp(num_agents)[e]
+            done_idx = [e for e in range(n_envs) if dm[e]]
+            for e in done_idx:
+                if len(rws[e]) >= num_agents:
+                    for p in range(num_agents):
+                        rew_np[e, p] += float(rws[e][p])   # +terminal
+                    done_np[e] = 1.0
+                    ep_rewards.append(int(rws[e][0]))
+                    if e < n_anchor:   # learner(p0) vs frozen anchor(p1)
+                        anchor_results.append(1 if rws[e][0] > 0 else 0)
+                pool.reset_one(e, templates[(e + len(ep_rewards)) % len(templates)])
+            buf_rew[t]  = torch.from_numpy(rew_np).to(DEV)
+            buf_done[t] = torch.from_numpy(done_np).to(DEV)
+            # refresh prev_diffs for reset envs in ONE batch call (was O(n_envs^2))
+            if done_idx:
+                fresh = np.array(pool.diff_vs_avg_opp(num_agents), dtype=np.float64)
+                for e in done_idx:
+                    prev_diffs[e] = fresh[e]
             total_env_steps += n_envs
 
         # ---------- GAE ----------
