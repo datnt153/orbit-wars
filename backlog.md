@@ -140,8 +140,19 @@
 
 ### P4 — Coverage
 - [ ] Train cả **4P** (hiện chỉ 2P) + arena 4P vs v4/marco.
-- [ ] (Nếu cần scale lớn) cân nhắc port JAX end-to-end như winner (~10k SPS) —
-      nhưng chi phí lớn, chỉ khi PyTorch+Rust chạm trần.
+
+### 🟢 JAX PORT (branch `jax-port`) — ĐANG THỰC THI (user chốt 2026-05-22)
+> Lý do: xóa F2 (round-trip GPU). Parity-first, một phase một lần, fast_sim =
+> trọng tài, PyTorch giữ làm baseline. Chi tiết: `jax_port.md`.
+- [x] S1-S7 engine JAX (`src/jax_env.py`) — full-step parity vs fast_sim **4e-5**.
+- [x] S9 `encode_state`+policy forward JAX — parity **6e-8** / **1e-4** vs PyTorch.
+- [x] S8 vmap+lax.scan: **env-only 2.73M SPS**, **self-play 164-171k SPS** (1×RTX4090).
+      → vs PyTorch+Rust 4.1k: ~660× / ~40×. Winner ~10k full-JAX → dư địa lớn.
+- [ ] **S10** PPO loop trong JAX (GAE+clip+value loss + recipe anchor/league/anneal,
+      log EV/clip_frac/awr) — TIẾP THEO.
+- [ ] **S11** export weights → bundle parity → arena vs PyTorch-best → submit khi vượt.
+- Setup remote: worktree `~/orbit-wars-jax` cô lập, venv `jax[cuda12]`, **GPU1 +
+  PREALLOCATE=false** (không đụng GPU0 run live).
 
 ---
 
