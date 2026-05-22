@@ -42,8 +42,21 @@ List Python → mảng fixed-shape + mask:
 - [x] **S9** policy entity-transformer + encode_state trong JAX thuần, **parity vs PyTorch**:
       forward gate/tgt/value **1e-4**, encode **6e-8**. Self-play rollout đầy đủ
       (encode→forward→sample→merge owner→step) chạy in-graph ✅
-- [ ] **S10** PPO loop JAX (jitted): GAE + clip + value loss + recipe anchor/league/anneal ← TIẾP THEO
+- [x] **S10** PPO loop JAX jitted (`src/jax_train.py`): rollout(scan)+GAE+clip+value+
+      entropy-anneal+optax adam+grad-clip+anchor seat0-vs-frozen+reset-on-done.
+      **~28k SPS full-train** trên RTX4090, EV→0.79 (khỏe), entropy anneal kiểm soát.
+      ⚠ awr~0.25 (run 40-upd ngắn chưa thắng anchor; cần tune ent/lr + league 50/50).
+- [ ] **S10b** tune (ent spike sớm) + league promotion 50/50 mix (như recipe PyTorch validated)
 - [ ] **S11** export weights → numpy bundle (parity inference) → arena vs PyTorch-best → submit khi vượt
+
+## Kết quả S10 (full PPO train, RTX4090, 1.31M steps/40-upd)
+| metric | giá trị | đọc |
+|---|---|---|
+| **SPS steady** | **~28,000** | full-train (rollout+GAE+4ep×32mb update). ~7× PyTorch, ~2.8× winner |
+| EV | 0.72→0.79 | value head khỏe (>0.5 ⇒ obs/arch ổn theo 1st place) |
+| entropy | 0.5→8.9→0.7 | nổ sớm rồi anneal kéo về (kiểm soát được) |
+| clip_frac | 0.06–0.24 | creep sớm rồi ổn |
+| awr | ~0.25 | ⚠ learner CHƯA thắng frozen anchor (run ngắn + cần tune) |
 
 ## Kết quả đo (2026-05-22) trên 1×RTX4090
 **Env-only (random policy):**
