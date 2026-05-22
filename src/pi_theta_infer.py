@@ -79,9 +79,12 @@ def forward(pf, pmask, gf):
         x = x + _lin(ff, w[f"{p}.ff.2.weight"], w[f"{p}.ff.2.bias"])
     gh = np.maximum(0.0, _lin(x, w["gate.0.weight"], w["gate.0.bias"]))
     gate = _lin(gh, w["gate.2.weight"], w["gate.2.bias"]).squeeze(-1)
-    fh = np.maximum(0.0, _lin(x, w["frac.0.weight"], w["frac.0.bias"]))
-    frac = 1.0 / (1.0 + np.exp(
-        -_lin(fh, w["frac.2.weight"], w["frac.2.bias"]).squeeze(-1)))
+    if "frac.0.weight" in w:
+        fh = np.maximum(0.0, _lin(x, w["frac.0.weight"], w["frac.0.bias"]))
+        frac = 1.0 / (1.0 + np.exp(
+            -_lin(fh, w["frac.2.weight"], w["frac.2.bias"]).squeeze(-1)))
+    else:                       # PPO ActorCritic has no frac head → send all ships
+        frac = np.ones_like(gate)
     q = _lin(x, w["tq.weight"], w["tq.bias"])
     k = _lin(x, w["tk.weight"], w["tk.bias"])
     D = q.shape[-1]
@@ -102,8 +105,14 @@ def decode_moves(obs, player, gate_thr=0.0):
     ships_of = {int(p[0]): p[5] for p in planets}
     moves = []
     import math
+    # PPO ActorCritic (no frac head) trains gate as Bernoulli(sigmoid) → must
+    # SAMPLE at inference (deterministic threshold 0.5 never fires: logits<0).
+    is_ppo = "frac.0.weight" not in _W
     for r in np.where(omask > 0.5)[0]:
-        if gate[r] <= gate_thr:
+        if is_ppo:
+            if np.random.random() >= 1.0 / (1.0 + np.exp(-gate[r])):
+                continue
+        elif gate[r] <= gate_thr:
             continue
         tr = int(np.argmax(tgt[r]))
         sid, tid = pids[r], pids[tr]
