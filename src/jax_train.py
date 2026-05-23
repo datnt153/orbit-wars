@@ -38,7 +38,8 @@ import jax_policy
 ROOT = Path(__file__).resolve().parent.parent
 F, G, P = jax_encode.F, jax_encode.G, jax_env.MAXP
 D = jax_policy.D
-GAMMA, LAM, CLIP, VAL_COEF, MAX_GRAD = 0.999, 0.95, 0.2, 0.5, 0.5
+GAMMA = float(os.environ.get("GAMMA", "0.9997"))   # winners used 0.9999-1.0
+LAM, CLIP, VAL_COEF, MAX_GRAD = 0.95, 0.2, 0.5, 0.5
 
 
 def load_templates(n_envs, num_agents):
@@ -101,8 +102,8 @@ def make_train_update(num_agents, n_envs, n_steps, epochs, mb, shape_scale):
         _, adv = jax.lax.scan(step, (z, z), (rew, val, done), reverse=True)
         return adv, adv + val
 
-    def loss_fn(params, pf, pmask, omask, gf, launch, target, lp_old,
-                adv, ret, tmask, ent_coef_t):
+    def loss_fn(params, teacher, pf, pmask, omask, gf, launch, target, lp_old,
+                adv, ret, tmask, ent_coef_t, kl_coef):
         g, t, v = jax_policy.forward(params, pf, pmask, gf)
         lp, ent = jax_policy.log_prob_and_entropy(g, t, omask, pmask,
                                                   launch, target)
@@ -113,14 +114,25 @@ def make_train_update(num_agents, n_envs, n_steps, epochs, mb, shape_scale):
         pl = -jnp.sum(jnp.minimum(surr1, surr2) * tmask) / denom
         vl = jnp.sum((v - ret) ** 2 * tmask) / denom
         em = jnp.sum(ent * tmask) / denom
-        loss = pl + VAL_COEF * vl - ent_coef_t * em
+        # teacher-KL: forward teacher (stop-grad), regularize student toward it
+        gt_, tt_, _ = jax_policy.forward(teacher, pf, pmask, gf)
+        gt_ = jax.lax.stop_gradient(gt_); tt_ = jax.lax.stop_gradient(tt_)
+        eps = 1e-6
+        ps = jnp.clip(jax.nn.sigmoid(g), eps, 1 - eps)
+        pt = jnp.clip(jax.nn.sigmoid(gt_), eps, 1 - eps)
+        gkl = (ps * jnp.log(ps / pt) + (1 - ps) * jnp.log((1 - ps) / (1 - pt))) * omask
+        ls = jax.nn.log_softmax(t, axis=-1); lt = jax.nn.log_softmax(tt_, axis=-1)
+        tkl = jnp.sum(jnp.exp(ls) * (ls - lt), axis=-1) * omask
+        kl_t = jnp.sum((jnp.sum(gkl, -1) + jnp.sum(tkl, -1)) * tmask) / denom
+        loss = pl + VAL_COEF * vl - ent_coef_t * em + kl_coef * kl_t
         kl = jnp.sum((lp_old - lp) * tmask) / denom
         cf = jnp.sum((jnp.abs(ratio - 1.0) > CLIP).astype(jnp.float32) * tmask) / denom
-        return loss, (pl, vl, em, kl, cf)
+        return loss, (pl, vl, em, kl, cf, kl_t)
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
-    def train_update(params, opt_state, anchor, js, phi, key, ent_coef_t):
+    def train_update(params, opt_state, anchor, teacher, js, phi, key,
+                     ent_coef_t, kl_coef):
         body = make_body(params, anchor, js)
         (js, phi, key), traj = jax.lax.scan(body, (js, phi, key), None, length=T)
         pf, pmask, omask, gf, launch, target, lp, val, rew, done, nd, nw = traj
@@ -155,8 +167,9 @@ def make_train_update(num_agents, n_envs, n_steps, epochs, mb, shape_scale):
             def mb_step(c, ib):
                 params, opt_state = c
                 (loss, aux), grads = grad_fn(
-                    params, pf[ib], pmask[ib], omask[ib], gf[ib], launch[ib],
-                    target[ib], lp[ib], adv[ib], ret[ib], tmask[ib], ent_coef_t)
+                    params, teacher, pf[ib], pmask[ib], omask[ib], gf[ib],
+                    launch[ib], target[ib], lp[ib], adv[ib], ret[ib], tmask[ib],
+                    ent_coef_t, kl_coef)
                 upd, opt_state = opt.update(grads, opt_state, params)
                 params = optax.apply_updates(params, upd)
                 return (params, opt_state), aux
@@ -167,8 +180,8 @@ def make_train_update(num_agents, n_envs, n_steps, epochs, mb, shape_scale):
         key, *eks = jax.random.split(key, epochs + 1)
         (params, opt_state), auxs = jax.lax.scan(
             epoch, (params, opt_state), jnp.stack(eks))
-        pl, vl, em, kl, cf = [a[-1, -1] for a in auxs]   # last mb of last epoch
-        metrics = (pl, vl, em, kl, cf, ev, jnp.sum(nd), jnp.sum(nw))
+        pl, vl, em, kl, cf, kl_t = [a[-1, -1] for a in auxs]   # last mb of last epoch
+        metrics = (pl, vl, em, kl, cf, ev, jnp.sum(nd), jnp.sum(nw), kl_t)
         return params, opt_state, js, phi, key, metrics
 
     # build closures needing js0 (initial templates) at call time
@@ -291,11 +304,18 @@ def main():
         prior_steps = int(np.load(resume).get("_STEPS", 0))
         print(f"resume={Path(resume).name} prior_steps={prior_steps:,}")
     anchor_ckpt = os.environ.get("ANCHOR_CKPT", "")
-    if anchor_ckpt:                              # fixed STRONG seed opponent (e.g. π_θ)
-        anchor = jax_policy.load_params(anchor_ckpt)
-        print(f"anchor SEED = {Path(anchor_ckpt).name} (fixed strong opponent)")
-    else:
-        anchor = jax.tree_util.tree_map(lambda x: x, params)
+    seed_anchor = (jax_policy.load_params(anchor_ckpt) if anchor_ckpt
+                   else jax.tree_util.tree_map(lambda x: x, params))
+    if anchor_ckpt:
+        print(f"seed opponent/teacher = {Path(anchor_ckpt).name}")
+    # league: opponent POOL (PFSP, chống overfit) + TEACHER (KL anti-forgetting)
+    kl_coef = float(os.environ.get("KL_COEF", "0.05"))
+    pool_every = int(os.environ.get("POOL_EVERY", "500"))   # add learner snapshot to pool
+    pool_max = int(os.environ.get("POOL_MAX", "6"))
+    teacher_every = int(os.environ.get("TEACHER_EVERY", "1000"))
+    pool = [seed_anchor]                          # opponents sampled from here
+    teacher = jax.tree_util.tree_map(lambda x: x, seed_anchor)  # KL reference (best-so-far)
+    prng = np.random.default_rng(0)
 
     use_wandb = os.environ.get("WANDB", "0") == "1" and wandb is not None
     if use_wandb:
@@ -317,27 +337,35 @@ def main():
     t_start = time.time()
     for u in range(updates):
         ent_t = max(ent_floor, ent * max(0.0, 1.0 - u / max(1, anneal_upd)))
+        anchor = pool[int(prng.integers(len(pool)))]   # sample opponent from pool (PFSP)
         t0 = time.time()
         params, opt_state, js, phi, key, metr = train_update(
-            params, opt_state, anchor, js, phi, key, jnp.float32(ent_t))
+            params, opt_state, anchor, teacher, js, phi, key,
+            jnp.float32(ent_t), jnp.float32(kl_coef))
         jax.block_until_ready(params)
         dt = time.time() - t0
-        pl, vl, em, kl, cf, ev, nd, nw = [float(x) for x in metr]
+        pl, vl, em, kl, cf, ev, nd, nw, kl_t = [float(x) for x in metr]
         awr = nw / nd if nd > 0 else 0.0
         steps = prior_steps + (u + 1) * steps_per
         if u == 0:
-            print(f"[u0 compile+run {dt:.1f}s]")
+            print(f"[u0 compile+run {dt:.1f}s]  pool=1 teacher=seed")
         print(f"u{u:04d} {steps_per/dt:7.0f}sps steps={steps/1e6:5.1f}M | "
               f"pl {pl:+.3f} vl {vl:6.2f} ent {em:.3f} kl {kl:+.4f} "
-              f"cf {cf:.3f} ev {ev:+.2f} awr {awr:.2f} ({int(nd)}g)", flush=True)
+              f"cf {cf:.3f} ev {ev:+.2f} awr {awr:.2f} klT {kl_t:.3f} "
+              f"|pool|={len(pool)} ({int(nd)}g)", flush=True)
         if use_wandb:
             wandb.log({"sps": steps_per / dt, "policy_loss": pl, "value_loss": vl,
                        "entropy": em, "kl": kl, "clip_frac": cf,
                        "explained_variance": ev, "awr": awr, "ent_coef": ent_t,
+                       "kl_teacher": kl_t, "pool_size": len(pool),
                        "games": int(nd)}, step=steps)
-        # league: refresh anchor to current learner (moving self-play opponent)
-        if promote_every and (u + 1) % promote_every == 0:
-            anchor = jax.tree_util.tree_map(lambda x: x, params)
+        # PFSP: add learner snapshot to pool; TEACHER: refresh to current (best-so-far)
+        if pool_every and (u + 1) % pool_every == 0:
+            pool.append(jax.tree_util.tree_map(lambda x: x, params))
+            if len(pool) > pool_max:
+                pool.pop(1)                        # keep seed[0], drop oldest snapshot
+        if teacher_every and (u + 1) % teacher_every == 0:
+            teacher = jax.tree_util.tree_map(lambda x: x, params)
         if save_every and ((u + 1) % save_every == 0 or u == updates - 1):
             save_ckpt(out_path, params, steps, u + 1)
             print(f"[saved {Path(out_path).name} @ {steps/1e6:.1f}M]", flush=True)
