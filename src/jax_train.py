@@ -59,14 +59,18 @@ def load_templates(n_envs, num_agents):
 
 
 def potential(js, A):
-    """Φ_a = material_a − mean_{b≠a} material_b ; material = Σ(ships+prod·8)."""
-    mats = [jnp.sum(jnp.where(js["p_valid"] & (js["p_owner"] == a),
-                              js["p_ships"] + js["p_prod"] * 8.0, 0.0), axis=-1)
+    """Φ_a = territory_a − mean_{b≠a} territory_b ; territory = Σ prod owned.
+
+    PROD (production capacity = planets held), NOT ships: rewards CAPTURING /
+    holding planets and penalises losing them — drives aggression/expansion.
+    Ships-based potential rewarded passive hoarding (the 590M failure)."""
+    terr = [jnp.sum(jnp.where(js["p_valid"] & (js["p_owner"] == a),
+                              js["p_prod"], 0.0), axis=-1)
             for a in range(A)]
-    mat = jnp.stack(mats, axis=-1)                      # [N,A]
-    total = jnp.sum(mat, axis=-1, keepdims=True)
-    avg_opp = (total - mat) / max(1, A - 1)
-    return mat - avg_opp
+    t = jnp.stack(terr, axis=-1)                        # [N,A]
+    total = jnp.sum(t, axis=-1, keepdims=True)
+    avg_opp = (total - t) / max(1, A - 1)
+    return t - avg_opp
 
 
 def make_train_update(num_agents, n_envs, n_steps, epochs, mb, shape_scale):
@@ -261,9 +265,9 @@ def main():
     mb = int(os.environ.get("MB", "1024"))
     updates = int(os.environ.get("UPDATES", "20"))
     ent = float(os.environ.get("ENT", "0.01"))
-    ent_floor = float(os.environ.get("ENT_FLOOR", "0.003"))    # keep exploring
-    anneal_upd = int(os.environ.get("ANNEAL_UPD", str(updates)))
-    shape_scale = float(os.environ.get("SHAPE_SCALE", "0.0"))  # 0 = pure terminal
+    ent_floor = float(os.environ.get("ENT_FLOOR", "0.0"))      # anneal→0 so gate sharpens
+    anneal_upd = int(os.environ.get("ANNEAL_UPD", str(max(1, updates // 2))))
+    shape_scale = float(os.environ.get("SHAPE_SCALE", "0.05"))  # dense territory signal
     promote_every = int(os.environ.get("PROMOTE_EVERY", "100"))  # league refresh
     save_every = int(os.environ.get("SAVE_EVERY", "100"))
     out_path = os.environ.get("OUT", str(ROOT / "data" / "jax_ppo.npz"))
