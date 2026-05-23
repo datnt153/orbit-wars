@@ -27,7 +27,7 @@ import math
 import numpy as np
 
 MAXP = 48                       # 20-40 planets + ≤4 transient comets, padded
-F = 15                          # per-planet feature dim
+F = 21                          # 15 base + 6 relational (nearest dists, threat, takeable, net_press)
 G = 8                           # global feature dim
 _PID, _OWN, _X, _Y, _R, _SHIPS, _PROD = range(7)
 CENTER = 50.0
@@ -81,6 +81,24 @@ def encode_state(obs, player):
             elif int(f[1]) >= 0:
                 press_enemy[best_j] += f[6]
 
+    # relational precompute (match jax_encode F15-20): nearest planet by relation
+    PX = np.array([p[_X] for p in planets], np.float64)
+    PY = np.array([p[_Y] for p in planets], np.float64)
+    POW = np.array([int(p[_OWN]) for p in planets])
+    dmat = np.sqrt((PX[:, None] - PX[None, :]) ** 2
+                   + (PY[:, None] - PY[None, :]) ** 2) if n else np.zeros((0, 0))
+    eye = np.eye(n, dtype=bool)
+
+    def _nearest(maskj):
+        if n == 0:
+            return np.zeros(0)
+        dd = np.where((~eye) & maskj[None, :], dmat, 1e9)
+        return dd.min(axis=1)
+
+    d_enemy_a = np.minimum(_nearest((POW >= 0) & (POW != player)), 100.0) / 70.0
+    d_neutral_a = np.minimum(_nearest(POW == -1), 100.0) / 70.0
+    d_mine_a = np.minimum(_nearest(POW == player), 100.0) / 70.0
+
     my_tot = opp_tot = neu_tot = 0.0
     my_np = 0
     for i, p in enumerate(planets):
@@ -112,6 +130,10 @@ def encode_state(obs, player):
             math.log1p(press_enemy[i]) / 8.0,
             1.0 if own == player else 0.0,
             1.0,
+            float(d_enemy_a[i]), float(d_neutral_a[i]), float(d_mine_a[i]),
+            min(max(press_enemy[i] / (ships + 1.0), 0.0), 3.0) / 3.0,   # threat
+            min(max(press_mine[i] / (ships + 1.0), 0.0), 3.0) / 3.0,    # takeable
+            math.tanh((press_mine[i] - press_enemy[i]) / 10.0),        # net_press
         )
         pmask[i] = 1.0
         planet_ids[i] = int(p[_PID])

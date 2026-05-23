@@ -7,7 +7,7 @@ players then envs in the rollout. Comet flag = 0 (comets deferred).
 import jax
 import jax.numpy as jnp
 
-F = 15
+F = 21          # 15 base + 6 relational (nearest-enemy/neutral/mine, threat, takeable, net_press)
 G = 8
 CENTER = 50.0
 ROT_LIMIT = 50.0
@@ -48,6 +48,23 @@ def encode_one(js, player):
     dsun = jnp.hypot(px - CENTER, py - CENTER)
     is_orb = (dsun + pr) < ROT_LIMIT
 
+    # --- relational features (F15-20): nearest planet by relation + threat ---
+    ddx = px[:, None] - px[None, :]
+    ddy = py[:, None] - py[None, :]
+    dmat = jnp.sqrt(ddx * ddx + ddy * ddy)          # [P,P]
+    other = pv[None, :] & (~jnp.eye(P, dtype=bool))  # valid OTHER planet
+
+    def nearest(mask_j):
+        m = other & mask_j[None, :]
+        return jnp.min(jnp.where(m, dmat, 1e9), axis=1)
+
+    d_enemy = jnp.minimum(nearest(is_enemy), 100.0) / 70.0
+    d_neutral = jnp.minimum(nearest(is_neu), 100.0) / 70.0
+    d_mine = jnp.minimum(nearest(is_mine), 100.0) / 70.0
+    threat = jnp.clip(press_enemy / (psh + 1.0), 0.0, 3.0) / 3.0
+    takeable = jnp.clip(press_mine / (psh + 1.0), 0.0, 3.0) / 3.0
+    net_press = jnp.tanh((press_mine - press_enemy) / 10.0)
+
     feats = jnp.stack([
         is_mine.astype(jnp.float32),
         is_enemy.astype(jnp.float32),
@@ -64,6 +81,8 @@ def encode_one(js, player):
         jnp.log1p(press_enemy) / 8.0,
         is_mine.astype(jnp.float32),
         jnp.ones(P, jnp.float32),
+        d_enemy, d_neutral, d_mine,                # F15-17
+        threat, takeable, net_press,               # F18-20
     ], axis=1)                                      # [P, F]
     pmask = pv.astype(jnp.float32)
     pf = feats * pmask[:, None]                     # padded rows -> 0

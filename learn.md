@@ -104,12 +104,19 @@ bình policy) — Orbit Wars có đối xứng quay quanh sun(50,50).
 ---
 
 ## ✅ Checklist áp dụng (cập nhật khi làm xong)
-- [ ] 1a Opponent pool (PFSP) trong jax_train
-- [ ] 1b Teacher-KL loss
-- [ ] 2  Value xem cả 2 phe (centralized critic)
-- [ ] 3  Features mở rộng + history (encode_state) + parity + retrain
-- [ ] gamma 0.999 → 0.9999
+- [x] **1a Opponent pool (PFSP)** trong jax_train (sample anchor từ pool, POOL_EVERY/POOL_MAX)
+- [x] **1b Teacher-KL loss** (KL student‖teacher, teacher refresh TEACHER_EVERY) — commit c32124f
+- [x] **2 Value xem cả 2 phe → N/A cho Orbit Wars.** Trick này cần vì **Lux có FOG OF
+      WAR**; Orbit Wars FULL-OBSERVABILITY → obs per-seat ĐÃ chứa đủ planet đối thủ →
+      value đã thấy cả 2 phe sẵn. KHÔNG cần centralized critic. (Bài học: trick này
+      chỉ cho game partial-observable.)
+- [x] **3 Features mở rộng** (F 15→21): nearest-enemy/neutral/mine dist, threat,
+      takeable, net_pressure — parity jax↔numpy **1.2e-7**. (History 10-frame: HOÃN —
+      cần plumbing history buffer trong env scan; relational features đã bắt phần lớn
+      cấu trúc tĩnh. Thêm history nếu cần lift thêm.)
+- [x] **gamma 0.999 → 0.9997** (env GAMMA)
 - [ ] (sau) 2-model submission trick khi có model mạnh thật
+- [ ] (nếu cần) features history 10-frame + danger-map 3-nearest + present-value đầy đủ
 
 > Xem thêm: `backlog.md` (findings + forum intel), `jax_port.md` (JAX infra),
 > `progress.md` (nhật ký). Gate THẬT = `arena_vs_v4.py` (≥0.5 mới submit).
