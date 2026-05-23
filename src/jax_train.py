@@ -290,7 +290,12 @@ def main():
         params = jax_policy.load_params(resume)
         prior_steps = int(np.load(resume).get("_STEPS", 0))
         print(f"resume={Path(resume).name} prior_steps={prior_steps:,}")
-    anchor = jax.tree_util.tree_map(lambda x: x, params)
+    anchor_ckpt = os.environ.get("ANCHOR_CKPT", "")
+    if anchor_ckpt:                              # fixed STRONG seed opponent (e.g. π_θ)
+        anchor = jax_policy.load_params(anchor_ckpt)
+        print(f"anchor SEED = {Path(anchor_ckpt).name} (fixed strong opponent)")
+    else:
+        anchor = jax.tree_util.tree_map(lambda x: x, params)
 
     use_wandb = os.environ.get("WANDB", "0") == "1" and wandb is not None
     if use_wandb:
