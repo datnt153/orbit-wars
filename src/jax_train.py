@@ -42,11 +42,15 @@ GAMMA, LAM, CLIP, VAL_COEF, MAX_GRAD = 0.999, 0.95, 0.2, 0.5, 0.5
 
 
 def load_templates(n_envs, num_agents):
-    pat = ROOT / "data" / "bovard" / "maps128"
-    eps = sorted(glob.glob(str(pat / "**" / "*.json"), recursive=True))
-    if not eps:
-        eps = sorted(glob.glob(str(ROOT / "data" / "bovard" / "**" / "*.json"),
-                               recursive=True))
+    md = os.environ.get("MAPS_DIR", "")          # e.g. data/maps_2p for 2P training
+    if md:
+        eps = sorted(glob.glob(str(ROOT / md / "**" / "*.json"), recursive=True))
+    else:
+        pat = ROOT / "data" / "bovard" / "maps128"
+        eps = sorted(glob.glob(str(pat / "**" / "*.json"), recursive=True))
+        if not eps:
+            eps = sorted(glob.glob(str(ROOT / "data" / "bovard" / "**" / "*.json"),
+                                   recursive=True))
     states = []
     for p in eps:
         obs0 = json.loads(open(p).read())["steps"][0][0]["observation"]
