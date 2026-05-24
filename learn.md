@@ -96,6 +96,26 @@ bình policy) — Orbit Wars có đối xứng quay quanh sun(50,50).
 
 ---
 
+## 📊 KẾT QUẢ THỰC NGHIỆM của ta (vs v4, gate thật)
+
+| Recipe | 4P | 2P-sampled | 2P-greedy |
+|---|---|---|---|
+| self-play cũ (4 biến thể) | 0-6% | 7% | — |
+| **tổng hợp (pool+teacher-KL+features F21), 295M** | **31%** | 7% | **25%** |
+
+- **Recipe tổng hợp WORK:** 4P 0→19→31% (tăng đều theo train) — lần đầu PPO **vượt
+  25% ideal-share** = ngang/hơn v4 trong 4P. Plateau ĐANG vỡ.
+- **🔑 GREEDY inference >> sampled:** 2P 7%→**25%** chỉ bằng đổi sample→ngưỡng
+  (sigmoid>0.5). Vì **entropy train KẸT cao ~30** (không anneal về thấp dù ent_coef=0
+  từ giữa run) → sample gate quá nhiễu → 2P head-to-head bị v4 phạt. Greedy bộc lộ
+  policy thật mạnh hơn. ⇒ **DEPLOY greedy** (free win) + cần **sửa entropy-kẹt**.
+- **entropy-kẹt nghi do teacher-KL:** teacher = snapshot self cũ (cũng nhiễu) →
+  KL(student‖teacher) kéo student về dist nhiễu thay vì để sắc lại. Lux dùng được vì
+  teacher của họ là model MẠNH/sắc. → ta nên: kl_coef nhỏ hơn (0.05→0.01) HOẶC bỏ
+  teacher-KL, để entropy anneal về ~0 → policy sắc → sampled ngang greedy.
+- **Đòn bậc cao tiếp:** (a) deploy greedy; (b) sửa entropy-kẹt; (c) **scale model**
+  85K→1-3M (winner 420K→10M; capacity có thể là trần); (d) train lâu hơn.
+
 ## 🧪 KỶ LUẬT (Opus-addendum 1st-place Orbit Wars — đã ghi backlog)
 - MỘT delta một lần. Parity test (ta làm với engine ✓). clip_frac creep = cảnh báo
   sớm. EV nên >0.8 (ta đạt 0.7-0.8 ✓). Đừng tin AI tự nhất quán; "run chết chưa" =
