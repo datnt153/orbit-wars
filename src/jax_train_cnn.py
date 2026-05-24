@@ -103,9 +103,9 @@ def make_update(N, T, epochs, mb, shape_scale, js0):
         return {"launch": ml & owned, "target": mt,
                 "frac": jnp.ones((N, P), jnp.float32)}
 
-    def loss_fn(params, grid, ix, pmask, omask, launch, target, lp_old,
+    def loss_fn(params, grid, ix, pmask, gf, omask, launch, target, lp_old,
                 adv, ret, ent_c):
-        g, t, v = cnn.forward(params, grid, ix, pmask, jnp.zeros((grid.shape[0], Gg)))
+        g, t, v = cnn.forward(params, grid, ix, pmask, gf)
         lp, ent = jax_policy.log_prob_and_entropy(g, t, omask, pmask, launch, target)
         ratio = jnp.exp(jnp.clip(lp - lp_old, -20, 20))
         s1 = ratio * adv; s2 = jnp.clip(ratio, 1 - CLIP, 1 + CLIP) * adv
@@ -140,11 +140,11 @@ def make_update(N, T, epochs, mb, shape_scale, js0):
                                        i, c), js2, js0)
             phin = potential(js2)
             # store seat-0 only
-            out = (g0, ix0, pm0, om0, launch[:, 0], target[:, 0], lp[:, 0],
+            out = (g0, ix0, pm0, om0, gf0, launch[:, 0], target[:, 0], lp[:, 0],
                    v[:, 0], rew[:, 0], done_f[:, 0], nd, nw)
             return (js2, phin, key), out
         (js, phi, key), tr = jax.lax.scan(body, (js, phi, key), None, length=T)
-        grid, ix, pm, om, launch, target, lp, val, rew, done, nd, nw = tr
+        grid, ix, pm, om, gf_, launch, target, lp, val, rew, done, nd, nw = tr
         # GAE (seat0) [T,N]
         def gstep(c, x):
             nv, last = c; r, vv, d = x; m = 1.0 - d
@@ -157,6 +157,7 @@ def make_update(N, T, epochs, mb, shape_scale, js0):
         ev = 1.0 - jnp.var(ret - val) / (jnp.var(ret) + 1e-8)
         fl = lambda x, *r: x.reshape(M, *r)
         grid = fl(grid, H, Wd, Cc); ix = fl(ix, P); pm = fl(pm, P); om = fl(om, P)
+        gf_ = fl(gf_, Gg)
         launch = fl(launch, P); target = fl(target, P)
         lp = fl(lp); adv = fl(adv); ret = fl(ret)
         adv = (adv - jnp.mean(adv)) / (jnp.std(adv) + 1e-6)
@@ -167,9 +168,9 @@ def make_update(N, T, epochs, mb, shape_scale, js0):
 
             def mbs(cc, ii):
                 pr, os_ = cc
-                (l, aux), grads = grad_fn(pr, grid[ii], ix[ii], pm[ii], om[ii],
-                                          launch[ii], target[ii], lp[ii], adv[ii],
-                                          ret[ii], ent_c)
+                (l, aux), grads = grad_fn(pr, grid[ii], ix[ii], pm[ii], gf_[ii],
+                                          om[ii], launch[ii], target[ii], lp[ii],
+                                          adv[ii], ret[ii], ent_c)
                 upd, os2 = opt.update(grads, os_, pr)
                 return (optax.apply_updates(pr, upd), os2), aux
             return jax.lax.scan(mbs, (params, opt_state), perm)
