@@ -109,10 +109,9 @@ def decode_moves(obs, player, gate_thr=0.0):
     # SAMPLE at inference (deterministic threshold 0.5 never fires: logits<0).
     is_ppo = "frac.0.weight" not in _W
     for r in np.where(omask > 0.5)[0]:
-        if is_ppo:
-            if np.random.random() >= 1.0 / (1.0 + np.exp(-gate[r])):
-                continue
-        elif gate[r] <= gate_thr:
+        # PPO ActorCritic: GREEDY gate (sigmoid>0.5 ⇔ logit>0). Arena cho thấy greedy
+        # >> sample cho policy đã train (4P 31→44%, 2P 7→25%) — entropy train còn cao.
+        if gate[r] <= gate_thr:
             continue
         tr = int(np.argmax(tgt[r]))
         sid, tid = pids[r], pids[tr]
